@@ -1,21 +1,21 @@
-name: 名称：随机 Cron
+name: Random Cron
 on:
   workflow_run:
     workflows: ["刷步数"]
     types:
-      -       - 完成
+      - completed
   workflow_dispatch:
 
 jobs:
   repo-sync:
-    runs-on:     运行于: ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 3
-    if:     如果: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch''success' || github.event_name == 'workflow_dispatch'
+    if: github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch'
     steps:
-      - uses:       - 使用：actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
-          token:           token: ${{ secrets.PAT }} #此处PAT需要申请，教程详见：README{{ secrets.PAT }} #此处PAT需要申请，教程详见：README
-      - name:       - 名称: 随机cron
+          token: ${{ secrets.PAT }} #此处PAT需要申请，教程详见：README
+      - name: random cron
         run: |
           source cron_convert.sh
           echo "configed CRON_HOURS ${{ vars.CRON_HOURS }}"
