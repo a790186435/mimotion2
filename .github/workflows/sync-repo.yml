@@ -1,0 +1,85 @@
+name: Sync Remote Repository
+
+on:
+  workflow_dispatch:  # 仅支持手动触发
+    inputs:
+      source_repo:
+        description: '源仓库地址 (例如: https://github.com/user/repo.git)'
+        required: true
+        default: 'https://github.com/a790186435/mimotion.git'
+        type: string
+      source_branch:
+        description: '源仓库分支'
+        required: false
+        default: 'master'
+        type: string
+      target_branch:
+        description: '当前仓库目标分支'
+        required: false
+        default: 'master'
+        type: string
+      commit_message:
+        description: '提交信息'
+        required: false
+        default: 'Sync from remote repository'
+        type: string
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要写入权限以推送代码
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # 获取完整历史以便处理合并
+
+      - name: Configure Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add remote repository
+        run: |
+          # 添加源仓库为远程源
+          git remote add source ${{ inputs.source_repo }}
+          # 获取源仓库数据
+          git fetch source ${{ inputs.source_branch }}
+
+      - name: Merge changes from source
+        run: |
+          # 合并源仓库分支到当前分支
+          # 使用 --allow-unrelated-histories 允许合并不相关的历史
+          # 使用 -X theirs 优先采用源仓库的版本解决冲突
+          git merge source/${{ inputs.source_branch }} --allow-unrelated-histories -X theirs -m "${{ inputs.commit_message }}"
+          
+          # 如果合并失败（如无共同历史），则重置到源仓库状态
+          if [ $? -ne 0 ]; then
+            echo "Merge failed, resetting to source branch..."
+            git reset --hard source/${{ inputs.source_branch }}
+            git commit --allow-empty -m "${{ inputs.commit_message }} (hard reset)"
+          fi
+
+      - name: Push changes to current repository
+        run: |
+          # 推送到当前仓库的目标分支
+          git push origin HEAD:${{ inputs.target_branch }} --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cleanup remote reference
+        if: always()
+        run: |
+          git remote remove source
+
+      - name: Sync completion notification
+        run: |
+          echo "✅ 同步完成！"
+          echo "源仓库: ${{ inputs.source_repo }}"
+          echo "源分支: ${{ inputs.source_branch }}"
+          echo "目标分支: ${{ inputs.target_branch }}"
+          echo "提交信息: ${{ inputs.commit_message }}"
