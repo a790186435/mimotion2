@@ -6,7 +6,7 @@ on:
       source_repo:
         description: '源仓库地址'
         required: true
-        default: 'https://github.com/a790186435/mimotion.git'
+        default: 'https://github.com/TonyJiangWJ/mimotion.git'
         type: string
       source_branch:
         description: '源仓库分支'
