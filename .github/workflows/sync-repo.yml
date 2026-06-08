@@ -1,4 +1,4 @@
-name: 同步源码
+name: 同步源码 (Keep Tokens & Self)
 
 on:
   workflow_dispatch:
@@ -29,13 +29,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      workflows: write  # 必须添加workflows权限
 
     steps:
       - name: Checkout current repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT }}  # 使用您已保存的PAT令牌
           fetch-depth: 0
 
       - name: Configure Git user
@@ -84,7 +85,7 @@ jobs:
               cp "$backup_file" "$file"
               echo "✅ Restored $file from backup."
               
-              # 如果文件被 git 追踪，则添加到暂存区
+              # 如果文件被git追踪，则添加到暂存区
               if git ls-files --error-unmatch "$file" > /dev/null 2>&1; then
                 git add "$file"
                 echo "  File staged for commit."
@@ -107,8 +108,6 @@ jobs:
           else
             echo "No changes to push."
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cleanup
         if: always()
