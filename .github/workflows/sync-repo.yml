@@ -1,6 +1,7 @@
-name: 同步源码
+name: Sync Remote Repository (Keep Tokens & Self)
+
 on:
-  workflow_dispatch:  # 仅支持手动触发
+  workflow_dispatch:
     inputs:
       source_repo:
         description: '源仓库地址'
@@ -20,7 +21,7 @@ on:
       commit_message:
         description: '提交信息'
         required: false
-        default: 'Sync from remote repository (keep encrypted_tokens.data)'
+        default: 'Sync from remote repository (keep encrypted_tokens.data & sync-repo.yml)'
         type: string
 
 jobs:
@@ -42,15 +43,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Backup protected file
+      - name: Backup protected files
         run: |
-          # 如果文件存在，备份到临时位置
-          if [ -f "encrypted_tokens.data" ]; then
-            cp encrypted_tokens.data /tmp/encrypted_tokens.data.bak
-            echo "✅ Backed up encrypted_tokens.data"
-          else
-            echo "⚠️ encrypted_tokens.data not found in current repo, nothing to backup."
-          fi
+          # 备份需要保护的文件列表
+          PROTECTED_FILES=("encrypted_tokens.data" ".github/workflows/sync-repo.yml")
+          for file in "${PROTECTED_FILES[@]}"; do
+            if [ -f "$file" ]; then
+              cp "$file" "/tmp/$(basename "$file").bak"
+              echo "✅ Backed up $file"
+            else
+              echo "⚠️ $file not found in current repo"
+            fi
+          done
 
       - name: Add remote and fetch
         run: |
@@ -59,7 +63,6 @@ jobs:
 
       - name: Merge or Reset to Source
         run: |
-          # 尝试合并
           echo "Attempting to merge source branch..."
           if git merge source/${{ inputs.source_branch }} --allow-unrelated-histories -X theirs -m "${{ inputs.commit_message }}"; then
             echo "✅ Merge successful."
@@ -69,44 +72,38 @@ jobs:
             echo "✅ Hard reset to source branch completed."
           fi
 
-      - name: Restore protected file
+      - name: Restore protected files
         run: |
-          # 无论合并还是重置，都尝试恢复备份的文件
-          if [ -f "/tmp/encrypted_tokens.data.bak" ]; then
-            cp /tmp/encrypted_tokens.data.bak encrypted_tokens.data
-            echo "✅ Restored encrypted_tokens.data from backup."
-            
-            # 如果文件被 git 追踪且发生了变化，需要重新添加并提交
-            # 检查文件是否被 git 追踪
-            if git ls-files --error-unmatch encrypted_tokens.data > /dev/null 2>&1; then
-              git add encrypted_tokens.data
-              # 如果之前是 merge 失败导致的 reset，可能需要重新 commit
-              # 这里我们统一在最后一起 commit 或 amend
-              echo "File staged for commit."
+          # 恢复所有受保护的文件
+          PROTECTED_FILES=("encrypted_tokens.data" ".github/workflows/sync-repo.yml")
+          for file in "${PROTECTED_FILES[@]}"; do
+            backup_file="/tmp/$(basename "$file").bak"
+            if [ -f "$backup_file" ]; then
+              # 确保目标目录存在
+              mkdir -p "$(dirname "$file")"
+              cp "$backup_file" "$file"
+              echo "✅ Restored $file from backup."
+              
+              # 如果文件被 git 追踪，则添加到暂存区
+              if git ls-files --error-unmatch "$file" > /dev/null 2>&1; then
+                git add "$file"
+                echo "  File staged for commit."
+              fi
             else
-              echo "File is untracked, adding to .gitignore if needed or just leaving it."
+              echo "ℹ️ No backup found for $file, skipping restore."
             fi
-          else
-            echo "ℹ️ No backup found, skipping restore."
-          fi
+          done
 
       - name: Commit and Push
         run: |
           # 检查是否有变更需要提交
           if ! git diff --staged --quiet || ! git diff HEAD --quiet; then
-            # 如果之前的步骤是 merge 成功，可能已经有 commit 了。
-            # 如果是 reset，则没有 commit。
-            # 为了简单起见，我们检查 HEAD 是否包含我们的恢复操作
-            
-            # 如果刚才发生了 reset，我们需要创建一个新的 commit 来包含恢复的文件
-            # 如果刚才 merge 成功了，我们需要 amend 或者新建一个 commit 来覆盖被合并掉的文件变化
-            
-            # 策略：强制创建一个新 commit 包含当前工作区状态
             git add .
-            git commit -m "${{ inputs.commit_message }} [restored encrypted_tokens.data]" --allow-empty
+            git commit -m "${{ inputs.commit_message }}" --allow-empty
             
-            echo "Pushing changes..."
+            echo "Pushing changes to ${{ inputs.target_branch }}..."
             git push origin HEAD:${{ inputs.target_branch }} --force
+            echo "✅ Sync completed successfully!"
           else
             echo "No changes to push."
           fi
@@ -116,5 +113,5 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          rm -f /tmp/encrypted_tokens.data.bak
+          rm -f /tmp/*.bak
           git remote remove source || true
