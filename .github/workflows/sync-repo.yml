@@ -1,4 +1,4 @@
-name: 同步源码
+name: Sync Remote Repository (Keep Tokens & Self)
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ on:
       commit_message:
         description: '提交信息'
         required: false
-        default: '同步源码 (keep encrypted_tokens.data & sync-repo.yml)'
+        default: 'Sync from remote repository (keep encrypted_tokens.data & sync-repo.yml)'
         type: string
 
 jobs:
@@ -29,14 +29,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      workflows: write  # 必须添加workflows权限
+      # v4版本中workflows权限需通过actions权限替代
+      actions: write
 
     steps:
       - name: Checkout current repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.target_branch }}
-          token: ${{ secrets.PAT }}  # 使用您已保存的PAT令牌
+          token: ${{ secrets.PAT }}  # 使用已保存的PAT令牌
           fetch-depth: 0
 
       - name: Configure Git user
