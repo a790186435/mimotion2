@@ -1,15 +1,15 @@
-name: 同步源码
+name: Sync from Parent Repository (Keep Tokens & Self)
 
 on:
   workflow_dispatch:
     inputs:
-      source_repo:
-        description: '源仓库地址'
+      parent_repo:
+        description: '父仓库地址'
         required: true
         default: 'https://github.com/TonyJiangWJ/mimotion.git'
         type: string
-      source_branch:
-        description: '源仓库分支'
+      parent_branch:
+        description: '父仓库分支'
         required: false
         default: 'master'
         type: string
@@ -21,7 +21,7 @@ on:
       commit_message:
         description: '提交信息'
         required: false
-        default: '同步源码 (keep encrypted_tokens.data & sync-repo.yml)'
+        default: 'Sync from parent repository (keep encrypted_tokens.data & sync-repo.yml)'
         type: string
 
 jobs:
@@ -29,7 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # v4版本中workflows权限需通过actions权限替代
       actions: write
 
     steps:
@@ -37,7 +36,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ inputs.target_branch }}
-          token: ${{ secrets.PAT }}  # 使用已保存的PAT令牌
+          token: ${{ secrets.PAT }}
           fetch-depth: 0
 
       - name: Configure Git user
@@ -45,9 +44,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Initialize Fork Relationship
+        run: |
+          # 检查是否已关联父仓库
+          if git remote -v | grep -q "parent"; then
+            echo "✅ Parent repository already linked"
+          else
+            git remote add parent ${{ inputs.parent_repo }}
+            git fetch parent ${{ inputs.parent_branch }}
+            # 创建关联提交（可选）
+            git commit --allow-empty -m "Initialize fork relationship with ${{ inputs.parent_repo }}"
+            git push origin HEAD:${{ inputs.target_branch }}
+            echo "✅ Parent repository linked successfully"
+          fi
+
       - name: Backup protected files
         run: |
-          # 备份需要保护的文件列表
           PROTECTED_FILES=("encrypted_tokens.data" ".github/workflows/sync-repo.yml")
           for file in "${PROTECTED_FILES[@]}"; do
             if [ -f "$file" ]; then
@@ -58,35 +70,26 @@ jobs:
             fi
           done
 
-      - name: Add remote and fetch
+      - name: Merge or Reset to Parent
         run: |
-          git remote add source ${{ inputs.source_repo }}
-          git fetch source ${{ inputs.source_branch }}
-
-      - name: Merge or Reset to Source
-        run: |
-          echo "Attempting to merge source branch..."
-          if git merge source/${{ inputs.source_branch }} --allow-unrelated-histories -X theirs -m "${{ inputs.commit_message }}"; then
+          echo "Attempting to merge parent branch..."
+          if git merge parent/${{ inputs.parent_branch }} --allow-unrelated-histories -X theirs -m "${{ inputs.commit_message }}"; then
             echo "✅ Merge successful."
           else
             echo "⚠️ Merge failed or conflicts occurred. Falling back to hard reset..."
-            git reset --hard source/${{ inputs.source_branch }}
-            echo "✅ Hard reset to source branch completed."
+            git reset --hard parent/${{ inputs.parent_branch }}
+            echo "✅ Hard reset to parent branch completed."
           fi
 
       - name: Restore protected files
         run: |
-          # 恢复所有受保护的文件
           PROTECTED_FILES=("encrypted_tokens.data" ".github/workflows/sync-repo.yml")
           for file in "${PROTECTED_FILES[@]}"; do
             backup_file="/tmp/$(basename "$file").bak"
             if [ -f "$backup_file" ]; then
-              # 确保目标目录存在
               mkdir -p "$(dirname "$file")"
               cp "$backup_file" "$file"
               echo "✅ Restored $file from backup."
-              
-              # 如果文件被git追踪，则添加到暂存区
               if git ls-files --error-unmatch "$file" > /dev/null 2>&1; then
                 git add "$file"
                 echo "  File staged for commit."
@@ -98,7 +101,6 @@ jobs:
 
       - name: Commit and Push
         run: |
-          # 检查是否有变更需要提交
           if ! git diff --staged --quiet || ! git diff HEAD --quiet; then
             git add .
             git commit -m "${{ inputs.commit_message }}" --allow-empty
@@ -114,4 +116,4 @@ jobs:
         if: always()
         run: |
           rm -f /tmp/*.bak
-          git remote remove source || true
+          git remote remove parent || true
