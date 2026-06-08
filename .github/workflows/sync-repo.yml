@@ -21,7 +21,7 @@ on:
       commit_message:
         description: '提交信息'
         required: false
-        default: 'Sync from remote repository (keep encrypted_tokens.data & sync-repo.yml)'
+        default: '同步源码 (keep encrypted_tokens.data & sync-repo.yml)'
         type: string
 
 jobs:
