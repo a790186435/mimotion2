@@ -1,4 +1,4 @@
-name: Sync from Parent Repository (Keep Tokens & Self)
+name: 同步源码
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ on:
       commit_message:
         description: '提交信息'
         required: false
-        default: 'Sync from parent repository (keep encrypted_tokens.data & sync-repo.yml)'
+        default: '同步源码 (keep encrypted_tokens.data & sync-repo.yml)'
         type: string
 
 jobs:
