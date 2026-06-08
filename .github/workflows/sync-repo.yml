@@ -1,10 +1,10 @@
-name: Sync Remote Repository
+name: Sync Remote Repository (Keep Tokens)
 
 on:
   workflow_dispatch:  # 仅支持手动触发
     inputs:
       source_repo:
-        description: '源仓库地址 (例如: https://github.com/user/repo.git)'
+        description: '源仓库地址'
         required: true
         default: 'https://github.com/a790186435/mimotion.git'
         type: string
@@ -21,14 +21,14 @@ on:
       commit_message:
         description: '提交信息'
         required: false
-        default: 'Sync from remote repository'
+        default: 'Sync from remote repository (keep encrypted_tokens.data)'
         type: string
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 需要写入权限以推送代码
+      contents: write
 
     steps:
       - name: Checkout current repository
@@ -36,50 +36,86 @@ jobs:
         with:
           ref: ${{ inputs.target_branch }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0  # 获取完整历史以便处理合并
+          fetch-depth: 0
 
       - name: Configure Git user
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add remote repository
+      - name: Backup protected file
         run: |
-          # 添加源仓库为远程源
-          git remote add source ${{ inputs.source_repo }}
-          # 获取源仓库数据
-          git fetch source ${{ inputs.source_branch }}
-
-      - name: Merge changes from source
-        run: |
-          # 合并源仓库分支到当前分支
-          # 使用 --allow-unrelated-histories 允许合并不相关的历史
-          # 使用 -X theirs 优先采用源仓库的版本解决冲突
-          git merge source/${{ inputs.source_branch }} --allow-unrelated-histories -X theirs -m "${{ inputs.commit_message }}"
-          
-          # 如果合并失败（如无共同历史），则重置到源仓库状态
-          if [ $? -ne 0 ]; then
-            echo "Merge failed, resetting to source branch..."
-            git reset --hard source/${{ inputs.source_branch }}
-            git commit --allow-empty -m "${{ inputs.commit_message }} (hard reset)"
+          # 如果文件存在，备份到临时位置
+          if [ -f "encrypted_tokens.data" ]; then
+            cp encrypted_tokens.data /tmp/encrypted_tokens.data.bak
+            echo "✅ Backed up encrypted_tokens.data"
+          else
+            echo "⚠️ encrypted_tokens.data not found in current repo, nothing to backup."
           fi
 
-      - name: Push changes to current repository
+      - name: Add remote and fetch
         run: |
-          # 推送到当前仓库的目标分支
-          git push origin HEAD:${{ inputs.target_branch }} --force
+          git remote add source ${{ inputs.source_repo }}
+          git fetch source ${{ inputs.source_branch }}
+
+      - name: Merge or Reset to Source
+        run: |
+          # 尝试合并
+          echo "Attempting to merge source branch..."
+          if git merge source/${{ inputs.source_branch }} --allow-unrelated-histories -X theirs -m "${{ inputs.commit_message }}"; then
+            echo "✅ Merge successful."
+          else
+            echo "⚠️ Merge failed or conflicts occurred. Falling back to hard reset..."
+            git reset --hard source/${{ inputs.source_branch }}
+            echo "✅ Hard reset to source branch completed."
+          fi
+
+      - name: Restore protected file
+        run: |
+          # 无论合并还是重置，都尝试恢复备份的文件
+          if [ -f "/tmp/encrypted_tokens.data.bak" ]; then
+            cp /tmp/encrypted_tokens.data.bak encrypted_tokens.data
+            echo "✅ Restored encrypted_tokens.data from backup."
+            
+            # 如果文件被 git 追踪且发生了变化，需要重新添加并提交
+            # 检查文件是否被 git 追踪
+            if git ls-files --error-unmatch encrypted_tokens.data > /dev/null 2>&1; then
+              git add encrypted_tokens.data
+              # 如果之前是 merge 失败导致的 reset，可能需要重新 commit
+              # 这里我们统一在最后一起 commit 或 amend
+              echo "File staged for commit."
+            else
+              echo "File is untracked, adding to .gitignore if needed or just leaving it."
+            fi
+          else
+            echo "ℹ️ No backup found, skipping restore."
+          fi
+
+      - name: Commit and Push
+        run: |
+          # 检查是否有变更需要提交
+          if ! git diff --staged --quiet || ! git diff HEAD --quiet; then
+            # 如果之前的步骤是 merge 成功，可能已经有 commit 了。
+            # 如果是 reset，则没有 commit。
+            # 为了简单起见，我们检查 HEAD 是否包含我们的恢复操作
+            
+            # 如果刚才发生了 reset，我们需要创建一个新的 commit 来包含恢复的文件
+            # 如果刚才 merge 成功了，我们需要 amend 或者新建一个 commit 来覆盖被合并掉的文件变化
+            
+            # 策略：强制创建一个新 commit 包含当前工作区状态
+            git add .
+            git commit -m "${{ inputs.commit_message }} [restored encrypted_tokens.data]" --allow-empty
+            
+            echo "Pushing changes..."
+            git push origin HEAD:${{ inputs.target_branch }} --force
+          else
+            echo "No changes to push."
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cleanup remote reference
+      - name: Cleanup
         if: always()
         run: |
-          git remote remove source
-
-      - name: Sync completion notification
-        run: |
-          echo "✅ 同步完成！"
-          echo "源仓库: ${{ inputs.source_repo }}"
-          echo "源分支: ${{ inputs.source_branch }}"
-          echo "目标分支: ${{ inputs.target_branch }}"
-          echo "提交信息: ${{ inputs.commit_message }}"
+          rm -f /tmp/encrypted_tokens.data.bak
+          git remote remove source || true
