@@ -11,9 +11,9 @@ import re
 import time
 import os
 
-import requests
-from util.aes_help import  encrypt_data, decrypt_data
+from util.aes_help import encrypt_data, decrypt_data
 import util.zepp_helper as zeppHelper
+import util.push_util as push_util
 
 # 获取默认值转int
 def get_int_value_default(_config: dict, _key, default):
@@ -82,27 +82,6 @@ def get_error_code(location):
     return result[0]
 
 
-# pushplus消息推送
-def push_plus(title, content):
-    requestUrl = f"http://www.pushplus.plus/send"
-    data = {
-        "token": PUSH_PLUS_TOKEN,
-        "title": title,
-        "content": content,
-        "template": "html",
-        "channel": "wechat"
-    }
-    try:
-        response = requests.post(requestUrl, data=data)
-        if response.status_code == 200:
-            json_res = response.json()
-            print(f"pushplus推送完毕：{json_res['code']}-{json_res['msg']}")
-        else:
-            print("pushplus推送失败")
-    except:
-        print("pushplus推送异常")
-
-
 class MiMotionRunner:
     def __init__(self, _user, _passwd):
         self.user_id = None
@@ -140,7 +119,7 @@ class MiMotionRunner:
             if self.device_id is None:
                 self.device_id = str(uuid.uuid4())
                 user_token_info["device_id"] = self.device_id
-            ok,msg = zeppHelper.check_app_token(app_token)
+            ok, msg = zeppHelper.check_app_token(app_token)
             if ok:
                 self.log_str += "使用加密保存的app_token\n"
                 return app_token
@@ -150,7 +129,8 @@ class MiMotionRunner:
                 app_token, msg = zeppHelper.grant_app_token(login_token)
                 if app_token is None:
                     self.log_str += f"login_token 失效 重新获取 last grant time: {user_token_info.get('login_token_time')}\n"
-                    login_token, app_token, user_id, msg = zeppHelper.grant_login_tokens(access_token, self.device_id, self.is_phone)
+                    login_token, app_token, user_id, msg = zeppHelper.grant_login_tokens(access_token, self.device_id,
+                                                                                         self.is_phone)
                     if login_token is None:
                         self.log_str += f"access_token 已失效：{msg} last grant time:{user_token_info.get('access_token_time')}\n"
                     else:
@@ -173,7 +153,8 @@ class MiMotionRunner:
             self.log_str += "登录获取accessToken失败：%s" % msg
             return None
         # print(f"device_id:{self.device_id} isPhone: {self.is_phone}")
-        login_token, app_token, user_id, msg = zeppHelper.grant_login_tokens(access_token, self.device_id, self.is_phone)
+        login_token, app_token, user_id, msg = zeppHelper.grant_login_tokens(access_token, self.device_id,
+                                                                             self.is_phone)
         if login_token is None:
             self.log_str += f"登录提取的 access_token 无效：{msg}"
             return None
@@ -193,7 +174,6 @@ class MiMotionRunner:
         user_tokens[self.user] = user_token_info
         return app_token
 
-
     # 主函数
     def login_and_post_step(self, min_step, max_step):
         if self.invalid:
@@ -206,29 +186,6 @@ class MiMotionRunner:
         self.log_str += f"已设置为随机步数范围({min_step}~{max_step}) 随机值:{step}\n"
         ok, msg = zeppHelper.post_fake_brand_data(step, app_token, self.user_id)
         return f"修改步数（{step}）[" + msg + "]", ok
-
-
-# 启动主函数
-def push_to_push_plus(exec_results, summary):
-    # 判断是否需要pushplus推送
-    if PUSH_PLUS_TOKEN is not None and PUSH_PLUS_TOKEN != '' and PUSH_PLUS_TOKEN != 'NO':
-        if PUSH_PLUS_HOUR is not None and PUSH_PLUS_HOUR.isdigit():
-            if time_bj.hour != int(PUSH_PLUS_HOUR):
-                print(f"当前设置push_plus推送整点为：{PUSH_PLUS_HOUR}, 当前整点为：{time_bj.hour}，跳过推送")
-                return
-        html = f'<div>{summary}</div>'
-        if len(exec_results) >= PUSH_PLUS_MAX:
-            html += '<div>账号数量过多，详细情况请前往github actions中查看</div>'
-        else:
-            html += '<ul>'
-            for exec_result in exec_results:
-                success = exec_result['success']
-                if success is not None and success is True:
-                    html += f'<li><span>账号：{exec_result["user"]}</span>刷步数成功，接口返回：{exec_result["msg"]}</li>'
-                else:
-                    html += f'<li><span>账号：{exec_result["user"]}</span>刷步数失败，失败原因：{exec_result["msg"]}</li>'
-            html += '</ul>'
-        push_plus(f"{format_now()} 刷步数通知", html)
 
 
 def run_single_account(total, idx, user_mi, passwd_mi):
@@ -280,7 +237,7 @@ def execute():
                 success_count += 1
         summary = f"\n执行账号总数{total}，成功：{success_count}，失败：{total - success_count}"
         print(summary)
-        push_to_push_plus(push_results, summary)
+        push_util.push_results(push_results, summary, push_config)
     else:
         print(f"账号数长度[{len(user_list)}]和密码数长度[{len(passwd_list)}]不匹配，跳过执行")
         exit(1)
@@ -301,6 +258,7 @@ def prepare_user_tokens() -> dict:
     else:
         return dict()
 
+
 def persist_user_tokens():
     data_path = r"encrypted_tokens.data"
     origin_str = json.dumps(user_tokens, ensure_ascii=False)
@@ -309,6 +267,7 @@ def persist_user_tokens():
         f.write(cipher_data)
         f.flush()
         f.close()
+
 
 if __name__ == "__main__":
     # 北京时间
@@ -337,9 +296,15 @@ if __name__ == "__main__":
             print("CONFIG格式不正确，请检查Secret配置，请严格按照JSON格式：使用双引号包裹字段和值，逗号不能多也不能少")
             traceback.print_exc()
             exit(1)
-        PUSH_PLUS_TOKEN = config.get('PUSH_PLUS_TOKEN')
-        PUSH_PLUS_HOUR = config.get('PUSH_PLUS_HOUR')
-        PUSH_PLUS_MAX = get_int_value_default(config, 'PUSH_PLUS_MAX', 30)
+        # 创建推送配置对象
+        push_config = push_util.PushConfig(
+            push_plus_token=config.get('PUSH_PLUS_TOKEN'),
+            push_plus_hour=config.get('PUSH_PLUS_HOUR'),
+            push_plus_max=get_int_value_default(config, 'PUSH_PLUS_MAX', 30),
+            push_wechat_webhook_key=config.get('PUSH_WECHAT_WEBHOOK_KEY'),
+            telegram_bot_token=config.get('TELEGRAM_BOT_TOKEN'),
+            telegram_chat_id=config.get('TELEGRAM_CHAT_ID')
+        )
         sleep_seconds = config.get('SLEEP_GAP')
         if sleep_seconds is None or sleep_seconds == '':
             sleep_seconds = 5
